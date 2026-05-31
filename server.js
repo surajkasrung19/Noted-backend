@@ -29,7 +29,8 @@ app.use(
     origin(origin, callback) {
       if (!origin || allowedOrigins.has(origin)) return callback(null, true);
       return callback(new Error(`Origin ${origin} is not allowed by CORS`));
-    }
+    },
+    credentials: true,
   })
 );
 app.use(express.json({ limit: "10mb" }));
