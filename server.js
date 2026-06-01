@@ -17,9 +17,18 @@ dotenv.config();
 const app = express();
 const port = process.env.PORT || 5000;
 
+function envList(...names) {
+  return names.flatMap((name) =>
+    (process.env[name] || "")
+      .split(",")
+      .map((origin) => origin.trim())
+      .filter(Boolean)
+  );
+}
+
 const allowedOrigins = new Set(
   [
-    process.env.CLIENT_URL,
+    ...envList("CLIENT_URL", "CLIENT_ORIGINS", "CORS_ORIGINS"),
     "http://localhost:5173"
   ].filter(Boolean)
 );
@@ -30,11 +39,19 @@ app.use(
       if (!origin || allowedOrigins.has(origin)) return callback(null, true);
       return callback(new Error(`Origin ${origin} is not allowed by CORS`));
     },
-    credentials: true,
+    credentials : true,
   })
 );
 app.use(express.json({ limit: "10mb" }));
 app.use(morgan("dev"));
+
+app.get("/", (_req, res) => {
+  res.json({
+    ok: true,
+    app: "Noted API",
+    health: "/api/health"
+  });
+});
 
 app.get("/api/health", (_req, res) => {
   res.json({ ok: true, app: "Noted API" });
