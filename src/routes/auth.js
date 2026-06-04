@@ -60,6 +60,11 @@ function applyPasswordResetToken(user) {
   return token;
 }
 
+function emailDeliveryMessage(successMessage, failurePrefix, emailResult) {
+  if (emailResult.sent) return successMessage;
+  return `${failurePrefix}: ${emailResult.reason || "Email provider is not configured."}`;
+}
+
 router.post(
   "/signup",
   asyncHandler(async (req, res) => {
@@ -82,9 +87,13 @@ router.post(
     const emailResult = await sendVerificationEmail(user, verificationToken);
     res.status(201).json({
       signupPending: true,
-      message: emailResult.sent
-        ? "Account created. Please check your email to verify your account."
-        : "Account created. Verification email could not be sent because email is not configured."
+      emailSent: emailResult.sent,
+      emailProvider: emailResult.provider || null,
+      message: emailDeliveryMessage(
+        "Account created. Please check your email to verify your account.",
+        "Account created, but the verification email could not be sent",
+        emailResult
+      )
     });
   })
 );
@@ -145,9 +154,13 @@ router.post(
     const emailResult = await sendVerificationEmail(user, token);
 
     res.json({
-      message: emailResult.sent
-        ? "Verification email sent. Please check your inbox."
-        : "Verification email could not be sent because email is not configured."
+      emailSent: emailResult.sent,
+      emailProvider: emailResult.provider || null,
+      message: emailDeliveryMessage(
+        "Verification email sent. Please check your inbox.",
+        "Verification email could not be sent",
+        emailResult
+      )
     });
   })
 );
@@ -220,4 +233,3 @@ router.get(
 );
 
 export default router;
-
