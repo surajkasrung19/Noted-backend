@@ -49,8 +49,11 @@ function createResendClient() {
 
 function fromAddress() {
   return (
+    process.env.SMTP_FROM ||
     process.env.SMTP_FROM_EMAIL ||
+    process.env.BREVO_FROM ||
     process.env.BREVO_FROM_EMAIL ||
+    process.env.FROM_EMAIL ||
     (smtpConfigured() ? smtpUser() : "") ||
     process.env.RESEND_FROM_EMAIL ||
     process.env.RESEND_FROM ||
@@ -117,7 +120,7 @@ async function sendAuthEmail({ to, subject, title, body, actionText, actionUrl }
     return { sent: false, reason: error.message || "Resend could not send the email" };
   }
 
-  return { sent: true, id: data?.id };
+  return { sent: true, id: data?.id, provider: "resend" };
 }
 
 export function sendVerificationEmail(user, token) {
