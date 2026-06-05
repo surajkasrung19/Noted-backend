@@ -4,11 +4,10 @@ import crypto from "crypto";
 import jwt from "jsonwebtoken";
 import User from "../models/User.js";
 import { requireAuth } from "../middleware/auth.js";
-import { sendPasswordResetEmail, sendVerificationEmail } from "../services/authEmail.js";
+import { sendPasswordResetEmail, sendWelcomeEmail } from "../services/authEmail.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 
 const router = express.Router();
-const verificationTtlMs = 1000 * 60 * 60 * 24;
 const passwordResetTtlMs = 1000 * 60 * 30;
 
 function signToken(user) {
@@ -34,23 +33,12 @@ function authResponse(user) {
   };
 }
 
-function hasPendingEmailVerification(user) {
-  return !user.emailVerified && Boolean(user.emailVerificationTokenHash);
-}
-
 function createPlainToken() {
   return crypto.randomBytes(32).toString("hex");
 }
 
 function hashToken(token) {
   return crypto.createHash("sha256").update(token).digest("hex");
-}
-
-function applyVerificationToken(user) {
-  const token = createPlainToken();
-  user.emailVerificationTokenHash = hashToken(token);
-  user.emailVerificationExpiresAt = new Date(Date.now() + verificationTtlMs);
-  return token;
 }
 
 function applyPasswordResetToken(user) {
@@ -80,18 +68,25 @@ router.post(
     if (existing) return res.status(409).json({ message: "An account with this email already exists" });
 
     const passwordHash = await bcrypt.hash(password, 12);
-    const user = new User({ name, email, passwordHash, authProvider: "local" });
-    const verificationToken = applyVerificationToken(user);
+    const user = new User({
+      name,
+      email,
+      passwordHash,
+      authProvider: "local",
+      emailVerified: true,
+      emailVerificationTokenHash: "",
+      emailVerificationExpiresAt: null
+    });
     await user.save();
 
-    const emailResult = await sendVerificationEmail(user, verificationToken);
+    const emailResult = await sendWelcomeEmail(user);
     res.status(201).json({
-      signupPending: true,
+      signupPending: false,
       emailSent: emailResult.sent,
       emailProvider: emailResult.provider || null,
       message: emailDeliveryMessage(
-        "Account created. Please check your email to verify your account.",
-        "Account created, but the verification email could not be sent",
+        "Account created. Welcome email sent. Please log in.",
+        "Account created. You can log in now, but the welcome email could not be sent",
         emailResult
       )
     });
@@ -109,59 +104,12 @@ router.post(
       return res.status(401).json({ message: "Invalid email or password" });
     }
 
-    if (hasPendingEmailVerification(user)) {
-      return res.status(403).json({ message: "Please verify your email before logging in." });
-    }
-
     user.lastLoginAt = new Date();
-    await user.save();
-    res.json(authResponse(user));
-  })
-);
-
-router.post(
-  "/verify-email",
-  asyncHandler(async (req, res) => {
-    const token = req.body.token || "";
-    const user = await User.findOne({
-      emailVerificationTokenHash: hashToken(token),
-      emailVerificationExpiresAt: { $gt: new Date() }
-    });
-
-    if (!user) return res.status(400).json({ message: "Verification link is invalid or expired" });
-
     user.emailVerified = true;
     user.emailVerificationTokenHash = "";
     user.emailVerificationExpiresAt = null;
     await user.save();
-
-    res.json({ ...authResponse(user), message: "Email verified" });
-  })
-);
-
-router.post(
-  "/resend-verification",
-  asyncHandler(async (req, res) => {
-    const email = req.body.email?.trim().toLowerCase();
-    const user = email ? await User.findOne({ email }) : null;
-
-    if (!user || user.emailVerified) {
-      return res.json({ message: "If verification is needed, a new email will be sent." });
-    }
-
-    const token = applyVerificationToken(user);
-    await user.save();
-    const emailResult = await sendVerificationEmail(user, token);
-
-    res.json({
-      emailSent: emailResult.sent,
-      emailProvider: emailResult.provider || null,
-      message: emailDeliveryMessage(
-        "Verification email sent. Please check your inbox.",
-        "Verification email could not be sent",
-        emailResult
-      )
-    });
+    res.json(authResponse(user));
   })
 );
 
