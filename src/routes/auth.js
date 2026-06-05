@@ -53,6 +53,15 @@ function emailDeliveryMessage(successMessage, failurePrefix, emailResult) {
   return `${failurePrefix}: ${emailResult.reason || "Email provider is not configured."}`;
 }
 
+function queueWelcomeEmail(user) {
+  sendWelcomeEmail(user).then((emailResult) => {
+    if (emailResult.sent) return;
+    console.error(`Welcome email could not be sent to ${user.email}: ${emailResult.reason || "Unknown SMTP error"}`);
+  }).catch((error) => {
+    console.error(`Welcome email crashed for ${user.email}:`, error.message || error);
+  });
+}
+
 router.post(
   "/signup",
   asyncHandler(async (req, res) => {
@@ -65,7 +74,12 @@ router.post(
     }
 
     const existing = await User.findOne({ email });
-    if (existing) return res.status(409).json({ message: "An account with this email already exists" });
+    if (existing) {
+      return res.status(409).json({
+        code: "ACCOUNT_EXISTS",
+        message: "An account with this email already exists. Please log in instead."
+      });
+    }
 
     const passwordHash = await bcrypt.hash(password, 12);
     const user = new User({
@@ -79,16 +93,11 @@ router.post(
     });
     await user.save();
 
-    const emailResult = await sendWelcomeEmail(user);
+    queueWelcomeEmail(user);
     res.status(201).json({
       signupPending: false,
-      emailSent: emailResult.sent,
-      emailProvider: emailResult.provider || null,
-      message: emailDeliveryMessage(
-        "Account created. Welcome email sent. Please log in.",
-        "Account created. You can log in now, but the welcome email could not be sent",
-        emailResult
-      )
+      emailQueued: true,
+      message: "Account created. Please log in. Your welcome email is on the way."
     });
   })
 );
