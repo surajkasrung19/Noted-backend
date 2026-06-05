@@ -1,5 +1,4 @@
 import nodemailer from "nodemailer";
-import { Resend } from "resend";
 import { escapeHtml } from "../utils/text.js";
 
 function smtpHost() {
@@ -39,25 +38,10 @@ function createSmtpTransport() {
   });
 }
 
-function createResendClient() {
-  if (!process.env.RESEND_API_KEY) {
-    return null;
-  }
-
-  return new Resend(process.env.RESEND_API_KEY);
-}
-
 function fromAddress() {
   return (
-    process.env.SMTP_FROM ||
     process.env.SMTP_FROM_EMAIL ||
-    process.env.BREVO_FROM ||
-    process.env.BREVO_FROM_EMAIL ||
-    process.env.FROM_EMAIL ||
-    (smtpConfigured() ? smtpUser() : "") ||
-    process.env.RESEND_FROM_EMAIL ||
-    process.env.RESEND_FROM ||
-    "Noted <onboarding@resend.dev>"
+    "Noted <no-reply@noted.app>"
   );
 }
 
@@ -67,24 +51,28 @@ function appUrl(path = "") {
 }
 
 async function sendAuthEmail({ to, subject, title, body, actionText, actionUrl }) {
-  const resend = createResendClient();
   const safeTitle = escapeHtml(title);
   const safeBody = escapeHtml(body);
-  const mail = {
-    from: fromAddress(),
-    to,
-    subject,
-    text: `${title}\n\n${body}\n\n${actionText}: ${actionUrl}`,
-    html: `
-      <div style="font-family:Arial,sans-serif;line-height:1.55;color:#1f2933">
-        <h2 style="margin:0 0 12px">${safeTitle}</h2>
-        <p>${safeBody}</p>
+  const actionMarkup = actionUrl
+    ? `
         <p>
           <a href="${actionUrl}" style="display:inline-block;padding:10px 14px;border-radius:8px;background:#13776d;color:#fff;text-decoration:none">
             ${escapeHtml(actionText)}
           </a>
         </p>
-        <p style="color:#64748b;font-size:13px">This link expires soon. If you did not request it, you can ignore this email.</p>
+      `
+    : "";
+  const mail = {
+    from: fromAddress(),
+    to,
+    subject,
+    text: actionUrl ? `${title}\n\n${body}\n\n${actionText}: ${actionUrl}` : `${title}\n\n${body}`,
+    html: `
+      <div style="font-family:Arial,sans-serif;line-height:1.55;color:#1f2933">
+        <h2 style="margin:0 0 12px">${safeTitle}</h2>
+        <p>${safeBody}</p>
+        ${actionMarkup}
+        <p style="color:#64748b;font-size:13px">If you did not request this email, you can ignore it.</p>
       </div>
     `
   };
@@ -107,30 +95,17 @@ async function sendAuthEmail({ to, subject, title, body, actionText, actionUrl }
     }
   }
 
-  if (!resend) {
-    return { sent: false, reason: "SMTP credentials or RESEND_API_KEY are required" };
-  }
-
-  const { data, error } = await resend.emails.send({
-    ...mail
-  });
-
-  if (error) {
-    console.error(`Resend auth email failed for ${to}:`, error.message || error);
-    return { sent: false, reason: error.message || "Resend could not send the email" };
-  }
-
-  return { sent: true, id: data?.id, provider: "resend" };
+  return { sent: false, reason: "Brevo SMTP credentials are required. Set SMTP_USER and SMTP_PASS." };
 }
 
-export function sendVerificationEmail(user, token) {
+export function sendWelcomeEmail(user) {
   return sendAuthEmail({
     to: user.email,
-    subject: "Verify your Noted email",
-    title: "Verify your Noted email",
-    body: `Hi ${user.name}, confirm this email address to protect your private notes workspace.`,
-    actionText: "Verify email",
-    actionUrl: appUrl(`/?verifyToken=${encodeURIComponent(token)}`)
+    subject: "Welcome to Noted",
+    title: "Welcome to Noted",
+    body: `Hi ${user.name}, your private notes workspace is ready. Capture drafts, days, reminders, and stories whenever they arrive.`,
+    actionText: "Open Noted",
+    actionUrl: appUrl("/")
   });
 }
 
