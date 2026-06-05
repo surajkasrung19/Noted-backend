@@ -5,7 +5,7 @@ function smtpHost() {
   return process.env.SMTP_HOST || process.env.BREVO_SMTP_HOST || "smtp-relay.brevo.com";
 }
 
-function smtpPort() {
+function primarySmtpPort() {
   return Number(process.env.SMTP_PORT || process.env.BREVO_SMTP_PORT || 587);
 }
 
@@ -21,15 +21,29 @@ function smtpConfigured() {
   return Boolean(smtpUser() && smtpPass());
 }
 
-function createSmtpTransport() {
+function smtpPortCandidates() {
+  const primary = primarySmtpPort();
+  const ports = [primary];
+  const host = smtpHost().toLowerCase();
+
+  if (host.includes("brevo") && !ports.includes(2525)) {
+    ports.push(2525);
+  }
+
+  return ports;
+}
+
+function createSmtpTransport(port) {
   if (!smtpConfigured()) return null;
 
-  const port = smtpPort();
   return nodemailer.createTransport({
     host: smtpHost(),
     port,
     secure: port === 465,
     requireTLS: port !== 465,
+    connectionTimeout: 15000,
+    greetingTimeout: 15000,
+    socketTimeout: 20000,
     auth: {
       user: smtpUser(),
       pass: smtpPass()
@@ -77,13 +91,19 @@ async function sendAuthEmail({ to, subject, title, body, actionText, actionUrl }
     `
   };
 
-  const smtp = createSmtpTransport();
-  if (smtp) {
+  if (smtpConfigured()) {
+    let lastError;
+    for (const port of smtpPortCandidates()) {
+      const smtp = createSmtpTransport(port);
+
+      if (!smtp) continue;
+
     try {
       const info = await smtp.sendMail(mail);
       return { sent: true, id: info.messageId, provider: "smtp" };
     } catch (error) {
-      console.error(`SMTP auth email failed for ${to}:`, error.message || error);
+        lastError = error;
+        console.error(`SMTP auth email failed for ${to} on port ${port}:`, error.message || error);
       if (error.code === "EAUTH" || String(error.message || "").includes("535")) {
         return {
           sent: false,
@@ -91,8 +111,10 @@ async function sendAuthEmail({ to, subject, title, body, actionText, actionUrl }
             "Brevo rejected the SMTP login. Copy the SMTP login from Brevo's SMTP & API page into SMTP_USER and copy an SMTP key into SMTP_PASS. Do not use your Gmail address, Brevo account password, or Brevo API key."
         };
       }
-      return { sent: false, reason: error.message || "SMTP could not send the email" };
+      }
     }
+
+    return { sent: false, reason: lastError?.message || "SMTP could not send the email" };
   }
 
   return { sent: false, reason: "Brevo SMTP credentials are required. Set SMTP_USER and SMTP_PASS." };
