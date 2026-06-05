@@ -7,7 +7,7 @@ function smtpHost() {
   return process.env.SMTP_HOST || process.env.BREVO_SMTP_HOST || "smtp-relay.brevo.com";
 }
 
-function smtpPort() {
+function primarySmtpPort() {
   return Number(process.env.SMTP_PORT || process.env.BREVO_SMTP_PORT || 587);
 }
 
@@ -23,15 +23,29 @@ function smtpConfigured() {
   return Boolean(smtpUser() && smtpPass());
 }
 
-function createSmtpTransport() {
+function smtpPortCandidates() {
+  const primary = primarySmtpPort();
+  const ports = [primary];
+  const host = smtpHost().toLowerCase();
+
+  if (host.includes("brevo") && !ports.includes(2525)) {
+    ports.push(2525);
+  }
+
+  return ports;
+}
+
+function createSmtpTransport(port) {
   if (!smtpConfigured()) return null;
 
-  const port = smtpPort();
   return nodemailer.createTransport({
     host: smtpHost(),
     port,
     secure: port === 465,
     requireTLS: port !== 465,
+    connectionTimeout: 15000,
+    greetingTimeout: 15000,
+    socketTimeout: 20000,
     auth: {
       user: smtpUser(),
       pass: smtpPass()
@@ -74,22 +88,26 @@ function reminderEmail(reminder) {
 
 async function sendReminderEmail(reminder) {
   const mail = reminderEmail(reminder);
-  const smtp = createSmtpTransport();
 
-  if (!smtp) {
+  if (!smtpConfigured()) {
     console.error("Brevo SMTP reminder email is not configured. Set SMTP_USER and SMTP_PASS.");
     return false;
   }
 
-  if (smtp) {
+  for (const port of smtpPortCandidates()) {
+    const smtp = createSmtpTransport(port);
+
+    if (!smtp) continue;
+
     try {
       await smtp.sendMail(mail);
       return true;
     } catch (error) {
-      console.error(`SMTP reminder failed for ${reminder.email}:`, error.message || error);
-      return false;
+      console.error(`SMTP reminder failed for ${reminder.email} on port ${port}:`, error.message || error);
     }
   }
+
+  return false;
 }
 
 export function startReminderWorker() {
