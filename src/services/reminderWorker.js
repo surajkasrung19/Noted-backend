@@ -1,6 +1,5 @@
 import cron from "node-cron";
 import nodemailer from "nodemailer";
-import { Resend } from "resend";
 import Reminder from "../models/Reminder.js";
 import { escapeHtml } from "../utils/text.js";
 
@@ -41,22 +40,15 @@ function createSmtpTransport() {
   });
 }
 
-function createResendClient() {
-  if (!process.env.RESEND_API_KEY) {
-    return null;
-  }
-
-  return new Resend(process.env.RESEND_API_KEY);
-}
-
 function fromAddress() {
   return (
+    process.env.SMTP_FROM ||
     process.env.SMTP_FROM_EMAIL ||
+    process.env.BREVO_FROM ||
     process.env.BREVO_FROM_EMAIL ||
+    process.env.FROM_EMAIL ||
     (smtpConfigured() ? smtpUser() : "") ||
-    process.env.RESEND_FROM_EMAIL ||
-    process.env.RESEND_FROM ||
-    "Noted <onboarding@resend.dev>"
+    "Noted <no-reply@noted.app>"
   );
 }
 
@@ -80,9 +72,14 @@ function reminderEmail(reminder) {
   };
 }
 
-async function sendReminderEmail(reminder, resend) {
+async function sendReminderEmail(reminder) {
   const mail = reminderEmail(reminder);
   const smtp = createSmtpTransport();
+
+  if (!smtp) {
+    console.error("Brevo SMTP reminder email is not configured. Set SMTP_USER and SMTP_PASS.");
+    return false;
+  }
 
   if (smtp) {
     try {
@@ -93,21 +90,9 @@ async function sendReminderEmail(reminder, resend) {
       return false;
     }
   }
-
-  if (!resend) return false;
-
-  const { error } = await resend.emails.send(mail);
-  if (error) {
-    console.error(`Resend reminder failed for ${reminder.email}:`, error.message || error);
-    return false;
-  }
-
-  return true;
 }
 
 export function startReminderWorker() {
-  const resend = createResendClient();
-
   cron.schedule("* * * * *", async () => {
     const due = await Reminder.find({
       sentAt: null,
@@ -115,11 +100,11 @@ export function startReminderWorker() {
       email: { $ne: "" }
     }).populate("note");
 
-    if (!due.length || !resend) return;
+    if (!due.length) return;
 
     await Promise.all(
       due.map(async (reminder) => {
-        const sent = await sendReminderEmail(reminder, resend);
+        const sent = await sendReminderEmail(reminder);
         if (!sent) return;
 
         reminder.sentAt = new Date();
@@ -128,4 +113,3 @@ export function startReminderWorker() {
     );
   });
 }
-
