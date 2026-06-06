@@ -86,6 +86,20 @@ function reminderEmail(reminder) {
   };
 }
 
+function smtpFailureReason(error) {
+  const message = String(error?.message || error || "");
+
+  if (message.includes("525") || message.toLowerCase().includes("unauthorized ip")) {
+    return "Brevo rejected this server IP address. Authorize the Render outbound IP in Brevo Authorized IPs, or turn off SMTP IP blocking for SMTP keys.";
+  }
+
+  if (error?.code === "EAUTH" || message.includes("535")) {
+    return "Brevo rejected the SMTP login. Check SMTP_USER and SMTP_PASS.";
+  }
+
+  return message || "SMTP could not send the reminder email";
+}
+
 async function sendReminderEmail(reminder) {
   const mail = reminderEmail(reminder);
 
@@ -103,7 +117,7 @@ async function sendReminderEmail(reminder) {
       await smtp.sendMail(mail);
       return true;
     } catch (error) {
-      console.error(`SMTP reminder failed for ${reminder.email} on port ${port}:`, error.message || error);
+      console.error(`SMTP reminder failed for ${reminder.email} on port ${port}:`, smtpFailureReason(error));
     }
   }
 
