@@ -41,9 +41,9 @@ function createSmtpTransport(port) {
     port,
     secure: port === 465,
     requireTLS: port !== 465,
-    connectionTimeout: 15000,
-    greetingTimeout: 15000,
-    socketTimeout: 20000,
+    connectionTimeout: 10000,
+    greetingTimeout: 10000,
+    socketTimeout: 15000,
     auth: {
       user: smtpUser(),
       pass: smtpPass()
@@ -54,7 +54,12 @@ function createSmtpTransport(port) {
 
 function fromAddress() {
   return (
+    process.env.SMTP_FROM ||
     process.env.SMTP_FROM_EMAIL ||
+    process.env.BREVO_FROM ||
+    process.env.BREVO_FROM_EMAIL ||
+    process.env.FROM_EMAIL ||
+    (smtpConfigured() ? smtpUser() : "") ||
     "Noted <no-reply@noted.app>"
   );
 }
@@ -62,6 +67,20 @@ function fromAddress() {
 function appUrl(path = "") {
   const base = process.env.CLIENT_URL || "http://localhost:5173";
   return `${base.replace(/\/$/, "")}${path}`;
+}
+
+function smtpFailureReason(error) {
+  const message = String(error?.message || error || "");
+
+  if (message.includes("525") || message.toLowerCase().includes("unauthorized ip")) {
+    return "Brevo rejected this server IP address. In Brevo, open Settings > Security > Authorized IPs and authorize this server/Render outbound IP, or turn off SMTP IP blocking for SMTP keys.";
+  }
+
+  if (error?.code === "EAUTH" || message.includes("535")) {
+    return "Brevo rejected the SMTP login. Copy the SMTP login from Brevo's SMTP & API page into SMTP_USER and copy an SMTP key into SMTP_PASS. Do not use your Gmail address, Brevo account password, or Brevo API key.";
+  }
+
+  return message || "SMTP could not send the email";
 }
 
 async function sendAuthEmail({ to, subject, title, body, actionText, actionUrl }) {
@@ -100,6 +119,7 @@ async function sendAuthEmail({ to, subject, title, body, actionText, actionUrl }
 
     try {
       const info = await smtp.sendMail(mail);
+      console.log(`SMTP auth email sent to ${to} on port ${port}: ${info.messageId}`);
       return { sent: true, id: info.messageId, provider: "smtp" };
     } catch (error) {
         lastError = error;
@@ -107,14 +127,13 @@ async function sendAuthEmail({ to, subject, title, body, actionText, actionUrl }
       if (error.code === "EAUTH" || String(error.message || "").includes("535")) {
         return {
           sent: false,
-          reason:
-            "Brevo rejected the SMTP login. Copy the SMTP login from Brevo's SMTP & API page into SMTP_USER and copy an SMTP key into SMTP_PASS. Do not use your Gmail address, Brevo account password, or Brevo API key."
+          reason: smtpFailureReason(error)
         };
       }
       }
     }
 
-    return { sent: false, reason: lastError?.message || "SMTP could not send the email" };
+    return { sent: false, reason: smtpFailureReason(lastError) };
   }
 
   return { sent: false, reason: "Brevo SMTP credentials are required. Set SMTP_USER and SMTP_PASS." };
