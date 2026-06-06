@@ -53,15 +53,6 @@ function emailDeliveryMessage(successMessage, failurePrefix, emailResult) {
   return `${failurePrefix}: ${emailResult.reason || "Email provider is not configured."}`;
 }
 
-function queueWelcomeEmail(user) {
-  sendWelcomeEmail(user).then((emailResult) => {
-    if (emailResult.sent) return;
-    console.error(`Welcome email could not be sent to ${user.email}: ${emailResult.reason || "Unknown SMTP error"}`);
-  }).catch((error) => {
-    console.error(`Welcome email crashed for ${user.email}:`, error.message || error);
-  });
-}
-
 router.post(
   "/signup",
   asyncHandler(async (req, res) => {
@@ -93,11 +84,16 @@ router.post(
     });
     await user.save();
 
-    queueWelcomeEmail(user);
+    const emailResult = await sendWelcomeEmail(user);
     res.status(201).json({
       signupPending: false,
-      emailQueued: true,
-      message: "Account created. Please log in. Your welcome email is on the way."
+      emailSent: emailResult.sent,
+      emailProvider: emailResult.provider || null,
+      message: emailDeliveryMessage(
+        "Account created. Welcome email sent. Please log in.",
+        "Account created. You can log in now, but the welcome email could not be sent",
+        emailResult
+      )
     });
   })
 );
